@@ -1,0 +1,163 @@
+close all
+clear all
+
+f = @(x,y)  2*(pi)^2*cos(pi*x).*cos(pi*y);
+g = @(x,y)  cos(pi*x).*cos(pi*y);
+exact_u = @(x,y)  cos(pi*x).*cos(pi*y);
+
+%%% draw and save image
+figure
+im = imfreehand;
+im = gca;
+im.Visible = 'off';
+
+saveas(im,'a.jpg')
+clear im
+
+h = 1/100;
+N = 1/h + 1;
+
+%%% binarize image
+pre_a = imread('a.jpg');
+bn = rgb2gray(pre_a);
+BW = imbinarize(bn);
+
+%%% change 0 & 1 to fill inside using a fuction 'imfill' 
+for i = 1:length(BW(:,1))
+    for j = 1:length(BW(1,:))
+        BW(i,j) = 1 - BW(i,j);
+    end
+end
+
+BW2 = imfill(BW,'holes');
+ 
+A = imresize(BW2,[N,N]);
+
+pNode = []; pA = [];
+for j = 1 : N
+    for k = 1: N
+        pNode = [pNode; (j-1)*h 1-(k-1)*h];
+        pA = [pA; k j];
+    end
+end
+
+%%% find out inside & boundary points (i.e., extract 1 in A)
+Node = [];
+for k = 1:length(pNode)
+    if A(pA(k,1),pA(k,2)) > 0
+        Node =[Node ; pNode(k,:)];
+    end
+end
+
+
+T = delaunayn(Node);
+
+%%% find out boundary points
+B = bwboundaries(A);
+
+boundary = B{1,1};
+
+Node_bd = [];
+for j = 1:length(boundary(:,1))
+    for k = 1:length(pNode)
+        if boundary(j,:) == pA(k,:)
+            Node_bd =[Node_bd ; pNode(k,:)];
+        end
+    end
+  
+end
+
+Node_bd_ind = [];
+for j = 1:length(Node_bd)
+    for k = 1:length(Node)
+        if Node_bd(j,:) == Node(k,:)
+            Node_bd_ind =[Node_bd_ind ; k];
+        end
+    end
+  end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% remove triangles using three boundary points
+for i = 1:length(T(:,1))
+    P = Node(T(i,:),:);
+    total = 0;
+    for j = 1:3
+        for k = 1:length(Node_bd(:,1))-1 %% 
+            if P(j,:) == Node_bd(k,:)
+                total = total + 1;
+            end
+        end
+    end
+    if total == 3
+        T(i,:) = [1 1 1];
+    end
+end
+
+figure; set(gcf,'units','normalized','outerposition',[0 0 1 1]);
+subplot(2,2,1);
+plot(Node(:,1),Node(:,2),'r.'), hold on
+plot(Node_bd(:,1),Node_bd(:,2),'r.','color','blue'), hold on
+axis([-0.1 1.1 -0.1 1.1])
+title('Node Generation');
+
+subplot(2,2,2);
+trimesh(T,Node(:,1),Node(:,2)), hold on
+axis([-0.1 1.1 -0.1 1.1])
+title('Triangulation');
+
+xw = TriGaussPoints(3);
+Node_num = length(Node);
+A =  sparse(Node_num,Node_num);
+b = sparse(Node_num,1);
+
+for j = 1:length(T)
+    K = T(j,:);
+    N1 = Node(K(1),:);    N2 = Node(K(2),:);    N3 = Node(K(3),:);
+    e1 = [1 0 0]';  e2 = [0 1 0]';  e3 = [0 0 1]';  E = [e1 e2 e3];
+    M = [N1(1) N1(2) 1 ; N2(1) N2(2) 1 ; N3(1) N3(2) 1];
+    
+    
+    w = xw(:,3);
+    affine = [0 0 1; 1 0 1 ; 0 1 1 ]\[N1; N2; N3];
+    vg = [xw(:, 1:2) ones(size(xw,1),1)]*affine;
+    
+    p = M\E;
+    area = abs(det(M))/2;
+    %%%%% p = basis's coefficient Matrix 3x3
+    
+    for row = 1:3
+        for col = 1:3
+            
+            A(K(row),K(col)) = A(K(row),K(col)) + (p(1:2,row)'*p(1:2,col)) *area;
+        end
+        for m = 1:size(xw,1)
+            b(K(row)) = b(K(row)) + area * w(m) * f(vg(m,1),vg(m,2)) * p(:,row)' * [vg(m,1); vg(m,2); 1];
+        end
+    end
+    
+end
+
+A1 = round(10^10*A); clear A
+A = A1/10^10;
+
+u0 = zeros(Node_num,1);
+u0(Node_bd_ind) = g(Node(Node_bd_ind,1),Node(Node_bd_ind,2));
+
+b = b - A*u0;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+A(Node_bd_ind,:)= []; A(:,Node_bd_ind)= []; % remove boundary
+b(Node_bd_ind)=[];
+
+inner = 1:Node_num;
+inner(Node_bd_ind) = [];
+appro_u = zeros(Node_num,1);
+appro_u(inner) = A\b;
+appro_u = appro_u +u0;
+
+subplot(2,2,3);
+trisurf(T,Node(:,1), Node(:,2), exact_u(Node(:,1),Node(:,2)));
+title('Exact u');
+
+subplot(2,2,4);
+trisurf(T,Node(:,1), Node(:,2), appro_u);
+title('Approximate u');
